@@ -17,6 +17,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Benutzername anzeigen
     const username = sessionStorage.getItem('username') || 'Thomas';
     document.getElementById('usernameDisplay').textContent = username;
+    updateGreeting(username);
 
     // Firestore Referenz
     db = window.firestoreDb || null;
@@ -72,6 +73,22 @@ function logout() {
     sessionStorage.removeItem('loggedIn');
     sessionStorage.removeItem('username');
     window.location.href = 'index.html';
+}
+
+function updateGreeting(username) {
+    const h = new Date().getHours();
+    let message = '';
+    if (h === 12) {
+        message = `Mahlzeit ${username}`;
+    } else if (h >= 5 && h < 12) {
+        message = `Guten Morgen ${username}`;
+    } else if (h >= 13 && h < 18) {
+        message = `Schönen Nachmittag ${username}`;
+    } else {
+        message = `Guten Abend ${username}`;
+    }
+    const titleEl = document.getElementById('greetingTitle');
+    if (titleEl) titleEl.textContent = message;
 }
 
 function startFahrt() {
