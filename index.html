@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <title>Fahrtenbuch - Login</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-box">
+            <h1>Fahrtenbuch</h1>
+            <form id="loginForm">
+                <div class="form-group">
+                    <label for="username">Benutzer</label>
+                    <input type="text" id="username" name="username" required autocomplete="username">
+                </div>
+                <div class="form-group">
+                    <label for="password">Passwort</label>
+                    <input type="password" id="password" name="password" required autocomplete="current-password">
+                </div>
+                <button type="submit" class="btn btn-primary">Anmelden</button>
+                <div id="errorMessage" class="error-message"></div>
+            </form>
+        </div>
+    </div>
+    <!-- Optional: Firebase auch auf Login-Seite laden, falls später benötigt -->
+    <script src="login.js"></script>
+</body>
+</html>
+

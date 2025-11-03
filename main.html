@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <title>Fahrtenbuch - Hauptseite</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="main-container">
+        <header>
+            <h1>Fahrtenbuch</h1>
+            <div class="user-info">
+                <span id="usernameDisplay">Thomas</span>
+                <button id="logoutBtn" class="btn btn-secondary">Abmelden</button>
+            </div>
+        </header>
+
+        <main>
+            <div class="fahrt-controls">
+                <button id="startFahrtBtn" class="btn btn-primary btn-large">
+                    <span id="fahrtStatus">Neue Fahrt starten</span>
+                </button>
+                <button id="stopFahrtBtn" class="btn btn-danger btn-large" style="display: none;">
+                    Fahrt beenden
+                </button>
+            </div>
+
+            <div class="tabs">
+                <button class="tab-button active" data-tab="tab-week">Aktuelle Woche</button>
+                <button class="tab-button" data-tab="tab-past">Vergangene Fahrten</button>
+            </div>
+
+            <section id="tab-week" class="tab-panel active">
+                <div class="fahrten-liste">
+                    <h2>Fahrten dieser Woche</h2>
+                    <div id="fahrtenContainerCurrent"></div>
+                </div>
+            </section>
+
+            <section id="tab-past" class="tab-panel">
+                <div class="fahrten-liste">
+                    <div class="past-header">
+                        <h2>Vergangene Fahrten</h2>
+                        <div class="quick-filters">
+                            <button id="filterLastWeek" class="btn btn-secondary">Letzte Woche</button>
+                            <button id="filterLastMonth" class="btn btn-secondary">Letzter Monat</button>
+                            <button id="filterClear" class="btn btn-secondary">Zurücksetzen</button>
+                        </div>
+                    </div>
+                    <div id="fahrtenContainerPast"></div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Modal für Fahrt-Details -->
+    <div id="fahrtModal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2>Fahrt-Details</h2>
+            <div id="fahrtDetails">
+                <div class="detail-info">
+                    <div class="info-item">
+                        <strong>Startzeit:</strong> <span id="detailStartTime"></span>
+                    </div>
+                    <div class="info-item">
+                        <strong>Endzeit:</strong> <span id="detailEndTime"></span>
+                    </div>
+                    <div class="info-item">
+                        <strong>Dauer:</strong> <span id="detailDuration"></span>
+                    </div>
+                    <div class="info-item">
+                        <strong>Gefahrene Kilometer:</strong> <span id="detailDistance"></span> km
+                    </div>
+                    <div class="info-item">
+                        <strong>Startort:</strong> <span id="detailStartLocation"></span>
+                    </div>
+                    <div class="info-item">
+                        <strong>Zielort:</strong> <span id="detailEndLocation"></span>
+                    </div>
+                </div>
+                <div id="detailMap" class="detail-map"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Firebase (Compat) -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore-compat.js"></script>
+    <script src="firebase.js"></script>
+    <script src="main.js"></script>
+</body>
+</html>
+
