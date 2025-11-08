@@ -76,6 +76,7 @@ body {
     cursor: pointer;
     transition: background-color 0.2s;
     width: 100%;
+    appearance: none;
     -webkit-appearance: none;
     touch-action: manipulation;
     min-height: 44px;
@@ -144,7 +145,8 @@ header {
     margin-bottom: 0;
     display: flex;
     justify-content: space-between;
-    align-items: center;
+    align-items: flex-start;
+    gap: 16px;
     position: sticky;
     top: 0;
     z-index: 100;
@@ -166,6 +168,68 @@ header h1 {
     font-weight: 400;
     color: #666;
     font-size: 14px;
+}
+
+.header-main {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    flex: 1;
+}
+
+.odometer-card {
+    background: #f8f8f8;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.odometer-row label {
+    display: block;
+    font-size: 13px;
+    color: #555;
+    margin-bottom: 6px;
+}
+
+.odometer-input-group {
+    display: flex;
+    gap: 8px;
+}
+
+.odometer-input-group input {
+    flex: 1;
+    padding: 12px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-size: 16px;
+}
+
+.odometer-input-group input:focus {
+    outline: none;
+    border-color: #333;
+}
+
+.odometer-stats {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 13px;
+    color: #555;
+}
+
+.stat-item strong {
+    font-weight: 600;
+    color: #333;
+}
+
+.btn-small {
+    width: auto;
+    font-size: 14px;
+    padding: 10px 16px;
+    align-self: flex-start;
 }
 
 .fahrt-controls {
@@ -373,6 +437,65 @@ header h1 {
     border-top: 1px solid #e0e0e0;
 }
 
+.day-summary-body {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    font-size: 15px;
+}
+
+.day-summary-message {
+    color: #333;
+}
+
+.summary-info {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.summary-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 14px;
+    color: #555;
+}
+
+.summary-row strong {
+    color: #333;
+    font-weight: 600;
+}
+
+.summary-input label {
+    display: block;
+    font-size: 14px;
+    color: #555;
+    margin-bottom: 6px;
+}
+
+.summary-input input {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-size: 16px;
+}
+
+.summary-input input:focus {
+    outline: none;
+    border-color: #333;
+}
+
+.modal-actions {
+    display: flex;
+    gap: 12px;
+}
+
+.modal-actions .btn {
+    flex: 1;
+}
+
 /* Loading Indicator */
 .loading {
     text-align: center;
@@ -391,6 +514,19 @@ header h1 {
 
 /* Mobile optimizations */
 @media (max-width: 480px) {
+    header {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .user-info {
+        justify-content: space-between;
+    }
+
+    .modal-actions {
+        flex-direction: column;
+    }
+
     .login-box {
         padding: 24px 16px;
     }
@@ -420,6 +556,10 @@ header h1 {
     .main-container {
         max-width: 600px;
         margin: 0 auto;
+    }
+
+    header {
+        align-items: center;
     }
 
     .modal-content {

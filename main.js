@@ -6,6 +6,9 @@ let routeCoordinates = [];
 let fahrten = [];
 let db = null;
 
+const ODOMETER_STORAGE_KEY = 'odometerState';
+let odometerState = getDefaultOdometerState();
+
 // Beim Laden der Seite
 document.addEventListener('DOMContentLoaded', function() {
     // Prüfen ob eingeloggt
@@ -27,12 +30,51 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('startFahrtBtn').addEventListener('click', startFahrt);
     document.getElementById('stopFahrtBtn').addEventListener('click', stopFahrt);
     document.querySelector('.close').addEventListener('click', closeModal);
+
+    const saveOdometerBtn = document.getElementById('saveOdometerBtn');
+    if (saveOdometerBtn) {
+        saveOdometerBtn.addEventListener('click', () => handleOdometerSave(username));
+    }
+
+    const odometerInput = document.getElementById('odometerInput');
+    if (odometerInput) {
+        odometerInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                handleOdometerSave(username);
+            }
+        });
+    }
+
+    const endOfDayBtn = document.getElementById('endOfDayBtn');
+    if (endOfDayBtn) {
+        endOfDayBtn.addEventListener('click', () => handleEndOfDay(username));
+    }
+
+    const confirmDaySummaryBtn = document.getElementById('confirmDaySummaryBtn');
+    if (confirmDaySummaryBtn) {
+        confirmDaySummaryBtn.addEventListener('click', () => confirmDaySummary(username));
+    }
+
+    const cancelDaySummaryBtn = document.getElementById('cancelDaySummaryBtn');
+    if (cancelDaySummaryBtn) {
+        cancelDaySummaryBtn.addEventListener('click', closeDaySummaryModal);
+    }
+
+    const daySummaryClose = document.querySelector('.day-summary-close');
+    if (daySummaryClose) {
+        daySummaryClose.addEventListener('click', closeDaySummaryModal);
+    }
     
     // Modal schließen bei Klick außerhalb
     window.addEventListener('click', function(event) {
         const modal = document.getElementById('fahrtModal');
         if (event.target === modal) {
             closeModal();
+        }
+        const dayModal = document.getElementById('daySummaryModal');
+        if (event.target === dayModal) {
+            closeDaySummaryModal();
         }
     });
 
@@ -64,6 +106,11 @@ document.addEventListener('DOMContentLoaded', function() {
         loadFahrten();
         renderLists();
     }
+
+    initializeOdometerState(username)
+        .catch(err => {
+            console.error('Fehler beim Laden des Kilometerstands:', err);
+        });
 
     // Prüfen ob eine aktive Fahrt existiert
     checkActiveFahrt();
@@ -408,6 +455,8 @@ function renderLists() {
     if (activeFilter === 'lastWeek') pastFiltered = filterLastWeek(past);
     if (activeFilter === 'lastMonth') pastFiltered = filterLastMonth(past);
     renderFahrtenList('fahrtenContainerPast', pastFiltered);
+
+    updateDayStats();
 }
 
 function renderFahrtenList(containerId, items) {
@@ -514,6 +563,338 @@ function initTabs() {
     // Standard: Aktuelle Woche aktiv
     const defaultPanel = document.getElementById('tab-week');
     if (defaultPanel) defaultPanel.classList.add('active');
+}
+
+// ========== Kilometerstand ==========
+async function initializeOdometerState(username) {
+    let loadedState = getDefaultOdometerState();
+
+    try {
+        loadedState = await loadOdometerState(username);
+    } catch (err) {
+        console.warn('Kilometerstand konnte nicht geladen werden, nutze Standardwerte:', err);
+    }
+
+    odometerState = {
+        ...getDefaultOdometerState(),
+        ...loadedState
+    };
+
+    const changed = ensureOdometerDayStamp();
+    updateOdometerDisplay();
+
+    if (changed) {
+        try {
+            await persistOdometerState(username, odometerState);
+        } catch (err) {
+            console.error('Aktualisierter Kilometerstand konnte nicht gespeichert werden:', err);
+        }
+    }
+}
+
+async function loadOdometerState(username) {
+    let state = null;
+
+    if (db) {
+        try {
+            const docRef = db.collection('users').doc(username);
+            const docSnap = await docRef.get();
+            if (docSnap.exists) {
+                const data = docSnap.data();
+                if (data && data.odometer) {
+                    state = normalizeOdometerState(data.odometer);
+                }
+            }
+        } catch (err) {
+            console.warn('Kilometerstand aus Firestore konnte nicht geladen werden:', err);
+        }
+    }
+
+    if (!state) {
+        const localValue = localStorage.getItem(ODOMETER_STORAGE_KEY);
+        if (localValue) {
+            try {
+                state = normalizeOdometerState(JSON.parse(localValue));
+            } catch (err) {
+                console.warn('Kilometerstand aus LocalStorage konnte nicht geparst werden:', err);
+            }
+        }
+    }
+
+    return state || getDefaultOdometerState();
+}
+
+function normalizeOdometerState(raw) {
+    if (!raw || typeof raw !== 'object') {
+        return getDefaultOdometerState();
+    }
+    return {
+        currentOdometer: toFiniteNumber(raw.currentOdometer),
+        startOfDay: toFiniteNumber(raw.startOfDay),
+        initialStartOfDay: toFiniteNumber(raw.initialStartOfDay),
+        dayStamp: typeof raw.dayStamp === 'string' ? raw.dayStamp : null,
+        lastUpdated: typeof raw.lastUpdated === 'string' ? raw.lastUpdated : null
+    };
+}
+
+async function persistOdometerState(username, state) {
+    const serializable = serializeOdometerState(state);
+    try {
+        localStorage.setItem(ODOMETER_STORAGE_KEY, JSON.stringify(serializable));
+    } catch (err) {
+        console.warn('Kilometerstand konnte nicht im LocalStorage gespeichert werden:', err);
+    }
+
+    if (db) {
+        try {
+            await db.collection('users').doc(username).set({ odometer: serializable }, { merge: true });
+        } catch (err) {
+            console.error('Kilometerstand konnte nicht in Firestore gespeichert werden:', err);
+            throw err;
+        }
+    }
+}
+
+function serializeOdometerState(state) {
+    return {
+        currentOdometer: toFiniteNumber(state.currentOdometer),
+        startOfDay: toFiniteNumber(state.startOfDay),
+        initialStartOfDay: toFiniteNumber(state.initialStartOfDay),
+        dayStamp: state.dayStamp || null,
+        lastUpdated: state.lastUpdated || null
+    };
+}
+
+function ensureOdometerDayStamp() {
+    const todayStamp = getTodayDateString();
+    let changed = false;
+
+    if (odometerState.dayStamp !== todayStamp) {
+        const baseline = isFiniteNumber(odometerState.currentOdometer)
+            ? odometerState.currentOdometer
+            : null;
+        odometerState.dayStamp = todayStamp;
+        odometerState.startOfDay = baseline;
+        odometerState.initialStartOfDay = baseline;
+        changed = true;
+    }
+
+    if (odometerState.initialStartOfDay === null && isFiniteNumber(odometerState.startOfDay)) {
+        odometerState.initialStartOfDay = odometerState.startOfDay;
+        changed = true;
+    }
+
+    if (changed) {
+        odometerState.lastUpdated = new Date().toISOString();
+    }
+
+    return changed;
+}
+
+function handleOdometerSave(username) {
+    const input = document.getElementById('odometerInput');
+    if (!input) return;
+    const parsed = parseNumberInput(input.value);
+    if (parsed === null) {
+        alert('Bitte gib einen gültigen Kilometerstand ein.');
+        return;
+    }
+
+    odometerState.currentOdometer = parsed;
+    odometerState.startOfDay = parsed;
+    odometerState.initialStartOfDay = parsed;
+    odometerState.dayStamp = getTodayDateString();
+    odometerState.lastUpdated = new Date().toISOString();
+
+    updateOdometerDisplay();
+    persistOdometerState(username, odometerState)
+        .catch(err => console.error('Fehler beim Speichern des Kilometerstands:', err));
+}
+
+function handleEndOfDay(username) {
+    if (!isFiniteNumber(odometerState.initialStartOfDay) && !isFiniteNumber(odometerState.startOfDay)) {
+        alert('Bitte gib zuerst deinen aktuellen Kilometerstand ein.');
+        return;
+    }
+
+    const startValue = isFiniteNumber(odometerState.initialStartOfDay)
+        ? odometerState.initialStartOfDay
+        : odometerState.startOfDay;
+
+    if (!isFiniteNumber(startValue)) {
+        alert('Bitte gib zuerst deinen aktuellen Kilometerstand ein.');
+        return;
+    }
+
+    const dayDistance = updateDayStats();
+    const computed = startValue + dayDistance;
+
+    showDaySummaryModal(startValue, dayDistance, computed);
+}
+
+function confirmDaySummary(username) {
+    const input = document.getElementById('finalOdometerInput');
+    if (!input) return;
+
+    const parsed = parseNumberInput(input.value);
+    if (parsed === null) {
+        alert('Bitte gib einen gültigen Kilometerstand ein.');
+        return;
+    }
+
+    odometerState.currentOdometer = parsed;
+    odometerState.startOfDay = parsed;
+    if (!isFiniteNumber(odometerState.initialStartOfDay)) {
+        odometerState.initialStartOfDay = parsed;
+    }
+    odometerState.dayStamp = getTodayDateString();
+    odometerState.lastUpdated = new Date().toISOString();
+
+    persistOdometerState(username, odometerState)
+        .catch(err => console.error('Fehler beim Speichern des Kilometerstands:', err))
+        .finally(() => {
+            updateOdometerDisplay();
+            closeDaySummaryModal();
+        });
+}
+
+function showDaySummaryModal(startValue, dayDistance, computedValue) {
+    const modal = document.getElementById('daySummaryModal');
+    if (!modal) return;
+
+    const startEl = document.getElementById('summaryStartValue');
+    if (startEl) startEl.textContent = formatOdometerLabel(startValue);
+
+    const distanceEl = document.getElementById('summaryDayDistance');
+    if (distanceEl) distanceEl.textContent = formatDistance(dayDistance);
+
+    const input = document.getElementById('finalOdometerInput');
+    if (input) {
+        input.value = isFiniteNumber(computedValue) ? formatOdometerInputValue(computedValue) : '';
+        setTimeout(() => {
+            input.focus();
+            input.select();
+        }, 50);
+    }
+
+    modal.style.display = 'block';
+}
+
+function closeDaySummaryModal() {
+    const modal = document.getElementById('daySummaryModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+function updateOdometerDisplay() {
+    const input = document.getElementById('odometerInput');
+    if (input && document.activeElement !== input) {
+        if (isFiniteNumber(odometerState.currentOdometer)) {
+            input.value = formatOdometerInputValue(odometerState.currentOdometer);
+        } else {
+            input.value = '';
+        }
+    }
+
+    const startValueEl = document.getElementById('odometerStartValue');
+    const startValue = isFiniteNumber(odometerState.initialStartOfDay)
+        ? odometerState.initialStartOfDay
+        : odometerState.startOfDay;
+    if (startValueEl) {
+        startValueEl.textContent = isFiniteNumber(startValue)
+            ? formatOdometerLabel(startValue)
+            : '–';
+    }
+
+    updateDayStats();
+}
+
+function updateDayStats() {
+    const todayDistance = calculateTodayDistance(fahrten);
+    const dayDistanceEl = document.getElementById('odometerDayDistance');
+    if (dayDistanceEl) {
+        dayDistanceEl.textContent = formatDistance(todayDistance);
+    }
+
+    const summaryDistanceEl = document.getElementById('summaryDayDistance');
+    if (summaryDistanceEl) {
+        summaryDistanceEl.textContent = formatDistance(todayDistance);
+    }
+
+    return todayDistance;
+}
+
+function calculateTodayDistance(list) {
+    if (!Array.isArray(list) || list.length === 0) return 0;
+    const todayStamp = getTodayDateString();
+    return list.reduce((sum, fahrt) => {
+        if (!fahrt || !fahrt.startTime) return sum;
+        const startTime = fahrt.startTime instanceof Date ? fahrt.startTime : new Date(fahrt.startTime);
+        if (getDateStamp(startTime) === todayStamp) {
+            const distance = Number(fahrt.distance) || 0;
+            return sum + distance;
+        }
+        return sum;
+    }, 0);
+}
+
+function parseNumberInput(value) {
+    if (value === null || value === undefined) return null;
+    const normalized = String(value).trim().replace(/,/g, '.');
+    if (normalized === '') return null;
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatOdometerLabel(value) {
+    if (!isFiniteNumber(value)) return '–';
+    return Number(value).toLocaleString('de-DE', {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 1
+    });
+}
+
+function formatOdometerInputValue(value) {
+    if (!isFiniteNumber(value)) return '';
+    return String(Number(value));
+}
+
+function formatDistance(value) {
+    const numeric = Number(value) || 0;
+    return `${numeric.toFixed(2)} km`;
+}
+
+function getDefaultOdometerState() {
+    return {
+        currentOdometer: null,
+        startOfDay: null,
+        initialStartOfDay: null,
+        dayStamp: null,
+        lastUpdated: null
+    };
+}
+
+function isFiniteNumber(value) {
+    return typeof value === 'number' && Number.isFinite(value);
+}
+
+function toFiniteNumber(value) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getTodayDateString(date = new Date()) {
+    return getDateStamp(date);
+}
+
+function getDateStamp(date) {
+    const d = new Date(date);
+    return [
+        d.getFullYear(),
+        String(d.getMonth() + 1).padStart(2, '0'),
+        String(d.getDate()).padStart(2, '0')
+    ].join('-');
 }
 
 // ========== Firestore Helpers ==========

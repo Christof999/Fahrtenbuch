@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <link rel="icon" href="data:,">
     <title>Fahrtenbuch - Hauptseite</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="styles.css">
@@ -12,7 +13,23 @@
 <body>
     <div class="main-container">
         <header>
-            <h1 id="greetingTitle">Fahrtenbuch</h1>
+            <div class="header-main">
+                <h1 id="greetingTitle">Fahrtenbuch</h1>
+                <div class="odometer-card">
+                    <div class="odometer-row">
+                        <label for="odometerInput">Aktueller Kilometerstand</label>
+                        <div class="odometer-input-group">
+                            <input id="odometerInput" type="number" inputmode="decimal" step="0.1" placeholder="z. B. 12345.6">
+                            <button id="saveOdometerBtn" class="btn btn-secondary">Speichern</button>
+                        </div>
+                    </div>
+                    <div class="odometer-stats">
+                        <span class="stat-item">Startwert heute: <strong id="odometerStartValue">–</strong></span>
+                        <span class="stat-item">Gefahren heute: <strong id="odometerDayDistance">0 km</strong></span>
+                    </div>
+                    <button id="endOfDayBtn" class="btn btn-primary btn-small">Tag beenden</button>
+                </div>
+            </div>
             <div class="user-info">
                 <span id="usernameDisplay">Thomas</span>
                 <button id="logoutBtn" class="btn btn-secondary">Abmelden</button>
@@ -84,6 +101,35 @@
                     </div>
                 </div>
                 <div id="detailMap" class="detail-map"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal für Tagesabschluss -->
+    <div id="daySummaryModal" class="modal">
+        <div class="modal-content">
+            <span class="close day-summary-close">&times;</span>
+            <h2>Tag beendet</h2>
+            <div class="day-summary-body">
+                <p class="day-summary-message">Tag beendet, Glückwunsch! Stimmt der ausgerechnete Kilometerstand mit dem tatsächlichen überein?</p>
+                <div class="summary-info">
+                    <div class="summary-row">
+                        <span>Startwert:</span>
+                        <strong id="summaryStartValue">–</strong>
+                    </div>
+                    <div class="summary-row">
+                        <span>Gefahrene Kilometer:</span>
+                        <strong id="summaryDayDistance">0 km</strong>
+                    </div>
+                </div>
+                <div class="summary-input">
+                    <label for="finalOdometerInput">Berechneter Kilometerstand</label>
+                    <input id="finalOdometerInput" type="number" inputmode="decimal" step="0.1">
+                </div>
+                <div class="modal-actions">
+                    <button id="confirmDaySummaryBtn" class="btn btn-primary">Bestätigen</button>
+                    <button id="cancelDaySummaryBtn" class="btn btn-secondary">Abbrechen</button>
+                </div>
             </div>
         </div>
     </div>

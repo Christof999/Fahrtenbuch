@@ -20,13 +20,15 @@ if (firebase.apps && firebase.apps.length === 0) {
 
 // Firestore Instanz bereitstellen
 window.firestoreDb = firebase.firestore();
-// CORS/ITP/Safari-Kompatibilität: Long-Polling erzwingen und Fetch-Streams deaktivieren
+// Safari benötigt häufig Long-Polling (ITP)
 try {
-    window.firestoreDb.settings({
-        experimentalForceLongPolling: true,
-        experimentalAutoDetectLongPolling: true,
-        useFetchStreams: false
-    });
+    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+    if (isSafari) {
+        window.firestoreDb.settings({
+            experimentalAutoDetectLongPolling: true,
+            useFetchStreams: false
+        });
+    }
 } catch (e) {
     console.warn('Konnte Firestore Settings nicht setzen:', e);
 }
