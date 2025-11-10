@@ -7,6 +7,9 @@
 window.YELLOWMAP_CONFIG = window.YELLOWMAP_CONFIG || {
     apiKey: 'siBdR0oeycx285equ5IzT%2FnHUmiG7QdS6HBsrlXFrYY0zm0J6oE7EJrNZBi%2F8BOW', // Hier den YellowMap API-Key eintragen
     enabled: true, // Auf true setzen, wenn API-Key vorhanden ist
-    library: 'free-3' // Oder 'enterprise-3' für Enterprise-Tarif
+    // Backend SOAP API Konfiguration
+    systemPartner: '', // SystemPartner von YellowMap (wird benötigt für SOAP API)
+    securityID: '', // SecurityID von YellowMap (wird benötigt für SOAP API)
+    useBackendAPI: true // Verwende Backend SOAP API statt JavaScript API
 };
 
