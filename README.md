@@ -28,6 +28,7 @@ Ein modernes Fahrtenbuch-Webapp mit HTML, JavaScript und CSS zur Dokumentation v
 - Leaflet.js für Karten
 - OpenStreetMap für Karten-Tiles
 - Nominatim API für Reverse Geocoding
+- YellowMap SmartMaps API für präzise Routenberechnung (optional)
 
 ## Browser-Anforderungen
 
@@ -77,4 +78,32 @@ service cloud.firestore {
 ```
 
 Hinweis: Derzeit wird als Benutzername der im Login verwendete Name (z. B. `Thomas`) genutzt, um die Fahrten unter `users/Thomas/fahrten` zu speichern.
+
+## YellowMap SmartMaps Integration (Optional)
+
+Für präzise Routenberechnung statt Luftlinie kann die YellowMap SmartMaps API verwendet werden.
+
+### Einrichtung
+
+1. API-Key bei YellowMap beantragen:
+   - Website: https://www.yellowmap.de
+   - Kontakt: geosolutions@yellowmap.de oder +49 (0)721 9638-125
+   - Tarife: Free (limitierte Requests) oder Enterprise (kostenpflichtig)
+
+2. API-Key in `config.js` eintragen:
+
+```js
+window.YELLOWMAP_CONFIG = {
+    apiKey: 'DEIN_API_KEY_HIER',
+    enabled: true, // Auf true setzen, um YellowMap zu aktivieren
+    library: 'free-3' // Oder 'enterprise-3' für Enterprise-Tarif
+};
+```
+
+### Funktionsweise
+
+- **Mit YellowMap**: Berechnet die tatsächliche Straßenroute zwischen Start und Ende
+- **Ohne YellowMap**: Berechnet die Luftlinie zwischen gesammelten GPS-Punkten (Fallback)
+
+Die App verwendet automatisch YellowMap, wenn konfiguriert, und fällt sonst auf die GPS-Punkt-Berechnung zurück.
 

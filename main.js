@@ -9,6 +9,9 @@ let db = null;
 const ODOMETER_STORAGE_KEY = 'odometerState';
 let odometerState = getDefaultOdometerState();
 
+const GEO_ACCURACY_THRESHOLD_METERS = 75;
+const GEO_MIN_DISTANCE_DELTA_KM = 0.01; // ~10 Meter
+
 // Beim Laden der Seite
 document.addEventListener('DOMContentLoaded', function() {
     // Prüfen ob eingeloggt
@@ -96,15 +99,42 @@ document.addEventListener('DOMContentLoaded', function() {
             .then(list => {
                 fahrten = list;
                 renderLists();
+                return recomputeStoredDistances(fahrten, username);
+            })
+            .then(hasChanges => {
+                if (hasChanges) renderLists();
+                // Nach GPS-Neuberechnung: YellowMap-Routen berechnen
+                return recomputeWithYellowMap(fahrten, username);
+            })
+            .then(hasChanges => {
+                if (hasChanges) renderLists();
             })
             .catch((err) => {
                 console.warn('Firestore nicht verfügbar, nutze LocalStorage:', err);
                 loadFahrten();
                 renderLists();
+                recomputeStoredDistances(fahrten, username)
+                    .then(hasChanges => {
+                        if (hasChanges) renderLists();
+                        return recomputeWithYellowMap(fahrten, username);
+                    })
+                    .then(hasChanges => {
+                        if (hasChanges) renderLists();
+                    })
+                    .catch(migrationErr => console.error('Fehler beim Neuberechnen der Distanzen:', migrationErr));
             });
     } else {
         loadFahrten();
         renderLists();
+        recomputeStoredDistances(fahrten, username)
+            .then(hasChanges => {
+                if (hasChanges) renderLists();
+                return recomputeWithYellowMap(fahrten, username);
+            })
+            .then(hasChanges => {
+                if (hasChanges) renderLists();
+            })
+            .catch(err => console.error('Fehler beim Neuberechnen der Distanzen:', err));
     }
 
     initializeOdometerState(username)
@@ -161,10 +191,12 @@ function startFahrt() {
                         startLocation: startLocation,
                         startAddress: startAddress,
                         routeCoordinates: [[startLocation.lat, startLocation.lng]],
-                        distance: 0
+                        distance: 0,
+                        pendingDistance: 0,
+                        lastRecordedLocation: { lat: startLocation.lat, lng: startLocation.lng }
                     };
 
-                    routeCoordinates = [[startLocation.lat, startLocation.lng]];
+                    routeCoordinates = currentFahrt.routeCoordinates;
 
                     // Position überwachen
                     watchId = navigator.geolocation.watchPosition(
@@ -201,10 +233,12 @@ function startFahrtWithLocation(location, address) {
         startLocation: location,
         startAddress: address,
         routeCoordinates: [[location.lat, location.lng]],
-        distance: 0
+        distance: 0,
+        pendingDistance: 0,
+        lastRecordedLocation: { lat: location.lat, lng: location.lng }
     };
 
-    routeCoordinates = [[location.lat, location.lng]];
+    routeCoordinates = currentFahrt.routeCoordinates;
 
     watchId = navigator.geolocation.watchPosition(
         updatePosition,
@@ -224,29 +258,47 @@ function startFahrtWithLocation(location, address) {
 }
 
 function updatePosition(position) {
+    if (!currentFahrt || !position || !position.coords) return;
+
+    const accuracy = getPositionAccuracy(position);
+    if (accuracy !== null && accuracy > GEO_ACCURACY_THRESHOLD_METERS) {
+        console.debug('Geoposition verworfen (niedrige Genauigkeit):', accuracy);
+        return;
+    }
+
     const newLocation = {
         lat: position.coords.latitude,
         lng: position.coords.longitude
     };
 
-    if (currentFahrt) {
-        // Neue Koordinate hinzufügen
-        currentFahrt.routeCoordinates.push([newLocation.lat, newLocation.lng]);
-        routeCoordinates.push([newLocation.lat, newLocation.lng]);
+    const previousLocation = currentFahrt.lastRecordedLocation || currentFahrt.startLocation;
+    if (!previousLocation) return;
 
-        // Distanz berechnen
-        if (currentFahrt.routeCoordinates.length > 1) {
-            const lastCoord = currentFahrt.routeCoordinates[currentFahrt.routeCoordinates.length - 2];
-            const distance = calculateDistance(
-                lastCoord[0], lastCoord[1],
-                newLocation.lat, newLocation.lng
-            );
-            currentFahrt.distance += distance;
-        }
+    const segmentDistance = calculateDistance(
+        previousLocation.lat, previousLocation.lng,
+        newLocation.lat, newLocation.lng
+    );
 
-        // Aktualisierte Fahrt speichern
+    currentFahrt.lastRecordedLocation = newLocation;
+
+    if (!Number.isFinite(segmentDistance) || segmentDistance === 0) {
         saveCurrentFahrt();
+        return;
     }
+
+    const pending = currentFahrt.pendingDistance || 0;
+    const aggregatedDistance = pending + segmentDistance;
+
+    if (aggregatedDistance >= GEO_MIN_DISTANCE_DELTA_KM) {
+        currentFahrt.distance += aggregatedDistance;
+        currentFahrt.pendingDistance = 0;
+        currentFahrt.routeCoordinates.push([newLocation.lat, newLocation.lng]);
+        routeCoordinates = currentFahrt.routeCoordinates;
+    } else {
+        currentFahrt.pendingDistance = aggregatedDistance;
+    }
+
+    saveCurrentFahrt();
 }
 
 function stopFahrt() {
@@ -278,10 +330,15 @@ function stopFahrt() {
         },
         function(error) {
             // Falls Geolocation fehlschlägt, letzte bekannte Position verwenden
-            if (routeCoordinates.length > 0) {
-                const lastCoord = routeCoordinates[routeCoordinates.length - 1];
+            const fallbackLocation = currentFahrt && currentFahrt.lastRecordedLocation
+                ? currentFahrt.lastRecordedLocation
+                : (routeCoordinates.length > 0
+                    ? { lat: routeCoordinates[routeCoordinates.length - 1][0], lng: routeCoordinates[routeCoordinates.length - 1][1] }
+                    : null);
+
+            if (fallbackLocation) {
                 finishFahrt(
-                    { lat: lastCoord[0], lng: lastCoord[1] },
+                    { lat: fallbackLocation.lat, lng: fallbackLocation.lng },
                     'Unbekannte Adresse'
                 );
             }
@@ -289,21 +346,55 @@ function stopFahrt() {
     );
 }
 
-function finishFahrt(endLocation, endAddress) {
+async function finishFahrt(endLocation, endAddress) {
     currentFahrt.endTime = new Date();
     currentFahrt.endLocation = endLocation;
     currentFahrt.endAddress = endAddress;
 
-    // Gesamtdistanz berechnen (falls noch nicht geschehen)
-    if (currentFahrt.distance === 0 && currentFahrt.routeCoordinates.length > 1) {
-        let totalDistance = 0;
-        for (let i = 1; i < currentFahrt.routeCoordinates.length; i++) {
-            const prev = currentFahrt.routeCoordinates[i - 1];
-            const curr = currentFahrt.routeCoordinates[i];
-            totalDistance += calculateDistance(prev[0], prev[1], curr[0], curr[1]);
+    const finalCoord = [endLocation.lat, endLocation.lng];
+    if (!Array.isArray(currentFahrt.routeCoordinates)) {
+        currentFahrt.routeCoordinates = [finalCoord];
+    } else {
+        const lastCoord = currentFahrt.routeCoordinates[currentFahrt.routeCoordinates.length - 1];
+        if (
+            !lastCoord ||
+            !Number.isFinite(lastCoord[0]) ||
+            !Number.isFinite(lastCoord[1]) ||
+            calculateDistance(lastCoord[0], lastCoord[1], finalCoord[0], finalCoord[1]) > 0
+        ) {
+            currentFahrt.routeCoordinates.push(finalCoord);
+        } else {
+            currentFahrt.routeCoordinates[currentFahrt.routeCoordinates.length - 1] = finalCoord;
         }
-        currentFahrt.distance = totalDistance;
     }
+
+    currentFahrt.lastRecordedLocation = endLocation;
+    currentFahrt.pendingDistance = 0;
+
+    // Versuche zuerst YellowMap Route zu berechnen, sonst Fallback auf GPS-Punkte
+    try {
+        const routeDistance = await calculateYellowMapRoute(
+            currentFahrt.startLocation,
+            endLocation
+        );
+        if (routeDistance !== null && Number.isFinite(routeDistance) && routeDistance > 0) {
+            currentFahrt.distance = routeDistance;
+            currentFahrt.routeCalculatedWithYellowMap = true;
+            console.log('Route mit YellowMap berechnet:', routeDistance.toFixed(3), 'km');
+        } else {
+            // Fallback auf GPS-Punkte
+            currentFahrt.distance = computeRouteDistance(currentFahrt.routeCoordinates);
+            currentFahrt.routeCalculatedWithYellowMap = false;
+            console.log('Route mit GPS-Punkten berechnet:', currentFahrt.distance.toFixed(3), 'km');
+        }
+    } catch (error) {
+        console.warn('YellowMap Route-Berechnung fehlgeschlagen, nutze GPS-Punkte:', error);
+        currentFahrt.distance = computeRouteDistance(currentFahrt.routeCoordinates);
+        currentFahrt.routeCalculatedWithYellowMap = false;
+    }
+
+    delete currentFahrt.pendingDistance;
+    delete currentFahrt.lastRecordedLocation;
 
     // Fahrt zur Liste hinzufügen
     fahrten.push(currentFahrt);
@@ -365,16 +456,394 @@ function handlePositionError(error) {
     alert(message);
 }
 
+// ========== YellowMap Route-Berechnung ==========
+async function calculateYellowMapRoute(startLocation, endLocation) {
+    // Prüfe ob YellowMap konfiguriert und verfügbar ist
+    if (!window.YELLOWMAP_CONFIG || !window.YELLOWMAP_CONFIG.enabled || !window.YELLOWMAP_CONFIG.apiKey) {
+        return null;
+    }
+
+    // Warte bis YellowMap API geladen ist (max. 10 Sekunden)
+    return new Promise((resolve) => {
+        let attempts = 0;
+        const maxAttempts = 20; // 20 * 500ms = 10 Sekunden
+
+        const checkYellowMap = () => {
+            if (typeof ym !== 'undefined' && typeof ym.ready === 'function') {
+                ym.ready(function(modules) {
+                    try {
+                        // Prüfe ob Routing-Modul verfügbar ist
+                        if (!modules || !modules.provider) {
+                            console.warn('YellowMap Routing-Modul nicht verfügbar');
+                            resolve(null);
+                            return;
+                        }
+
+                        const provider = modules.provider;
+                        if (!provider.RouteService) {
+                            console.warn('YellowMap RouteService nicht verfügbar');
+                            resolve(null);
+                            return;
+                        }
+
+                        // Route berechnen
+                        const routeService = new provider.RouteService();
+                        const start = provider.LatLng(startLocation.lat, startLocation.lng);
+                        const end = provider.LatLng(endLocation.lat, endLocation.lng);
+
+                        routeService.route({
+                            origin: start,
+                            destination: end,
+                            travelMode: provider.TravelMode.DRIVING
+                        }, function(result, status) {
+                            if (status === provider.RouteStatus.OK && result && result.routes && result.routes.length > 0) {
+                                const route = result.routes[0];
+                                if (route.legs && route.legs.length > 0) {
+                                    // Summiere alle Legs der Route
+                                    let totalDistance = 0;
+                                    route.legs.forEach(leg => {
+                                        if (leg.distance && leg.distance.value) {
+                                            totalDistance += leg.distance.value; // Wert ist in Metern
+                                        }
+                                    });
+                                    const distanceKm = totalDistance / 1000;
+                                    resolve(distanceKm);
+                                } else {
+                                    console.warn('YellowMap Route hat keine Legs');
+                                    resolve(null);
+                                }
+                            } else {
+                                console.warn('YellowMap Route-Berechnung fehlgeschlagen:', status);
+                                resolve(null);
+                            }
+                        });
+                    } catch (error) {
+                        console.error('Fehler bei YellowMap Route-Berechnung:', error);
+                        resolve(null);
+                    }
+                });
+            } else {
+                attempts++;
+                if (attempts < maxAttempts) {
+                    setTimeout(checkYellowMap, 500);
+                } else {
+                    console.warn('YellowMap API konnte nicht geladen werden (Timeout)');
+                    resolve(null);
+                }
+            }
+        };
+
+        checkYellowMap();
+    });
+}
+
 function calculateDistance(lat1, lon1, lat2, lon2) {
-    const R = 6371; // Radius der Erde in km
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = 
-        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    if ([lat1, lon1, lat2, lon2].some(value => typeof value !== 'number' || !Number.isFinite(value))) {
+        return NaN;
+    }
+
+    const φ1 = toRadians(lat1);
+    const φ2 = toRadians(lat2);
+    const Δφ = toRadians(lat2 - lat1);
+    const Δλ = toRadians(lon2 - lon1);
+
+    const a =
+        Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+        Math.cos(φ1) * Math.cos(φ2) *
+        Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c;
+
+    const distanceMeters = 6371008.8 * c; // mittlerer Erdradius in Metern
+    return distanceMeters / 1000;
+}
+
+function toRadians(value) {
+    return value * Math.PI / 180;
+}
+
+function computeRouteDistance(coordinates) {
+    if (!Array.isArray(coordinates) || coordinates.length < 2) return 0;
+
+    let total = 0;
+    let pending = 0;
+    for (let i = 1; i < coordinates.length; i++) {
+        const prev = coordinates[i - 1];
+        const curr = coordinates[i];
+        if (!Array.isArray(prev) || !Array.isArray(curr) || prev.length < 2 || curr.length < 2) continue;
+
+        const segment = calculateDistance(prev[0], prev[1], curr[0], curr[1]);
+        if (!Number.isFinite(segment)) continue;
+
+        pending += segment;
+        const isLastSegment = i === coordinates.length - 1;
+        if (pending >= GEO_MIN_DISTANCE_DELTA_KM || isLastSegment) {
+            total += pending;
+            pending = 0;
+        }
+    }
+    return total;
+}
+
+function getPositionAccuracy(position) {
+    if (!position || !position.coords) return null;
+    const accuracy = position.coords.accuracy;
+    return typeof accuracy === 'number' && Number.isFinite(accuracy)
+        ? accuracy
+        : null;
+}
+
+async function recomputeStoredDistances(list, username) {
+    if (!Array.isArray(list) || list.length === 0) return false;
+
+    let hasChanges = false;
+    let batch = null;
+    let batchHasUpdates = false;
+
+    if (db && username) {
+        batch = db.batch();
+    }
+
+    for (const fahrt of list) {
+        if (!fahrt) continue;
+        const coordinates = Array.isArray(fahrt.routeCoordinates)
+            ? fahrt.routeCoordinates
+            : [];
+
+        const normalizedCoords = [];
+        for (const point of coordinates) {
+            if (Array.isArray(point) && point.length >= 2) {
+                const lat = Number(point[0]);
+                const lng = Number(point[1]);
+                if (Number.isFinite(lat) && Number.isFinite(lng)) {
+                    normalizedCoords.push([lat, lng]);
+                }
+            } else if (point && typeof point === 'object' && Number.isFinite(point.lat) && Number.isFinite(point.lng)) {
+                normalizedCoords.push([Number(point.lat), Number(point.lng)]);
+            }
+        }
+
+        // Auch Fahrten mit nur Start- und Endpunkt berechnen
+        if (normalizedCoords.length === 0 && fahrt.startLocation && fahrt.endLocation) {
+            const startLat = Number(fahrt.startLocation.lat);
+            const startLng = Number(fahrt.startLocation.lng);
+            const endLat = Number(fahrt.endLocation.lat);
+            const endLng = Number(fahrt.endLocation.lng);
+            if (Number.isFinite(startLat) && Number.isFinite(startLng) &&
+                Number.isFinite(endLat) && Number.isFinite(endLng)) {
+                normalizedCoords.push([startLat, startLng]);
+                normalizedCoords.push([endLat, endLng]);
+            }
+        }
+
+        if (normalizedCoords.length < 2) {
+            console.debug('Fahrt übersprungen (zu wenige Koordinaten):', fahrt.id);
+            continue;
+        }
+
+        const recalculated = computeRouteDistance(normalizedCoords);
+        if (!Number.isFinite(recalculated)) {
+            console.debug('Fahrt übersprungen (ungültige Berechnung):', fahrt.id);
+            continue;
+        }
+
+        const currentDistance = Number(fahrt.distance) || 0;
+        const diff = Math.abs(currentDistance - recalculated);
+        
+        // Immer neuberechnen, wenn Unterschied größer als 0.001 km (1 Meter)
+        if (diff <= 0.001) {
+            console.debug('Fahrt übersprungen (Distanz bereits korrekt):', fahrt.id, 'aktuell:', currentDistance, 'berechnet:', recalculated);
+            continue;
+        }
+
+        const roundedDistance = Number(recalculated.toFixed(3));
+        console.log(`Fahrt ${fahrt.id}: ${currentDistance.toFixed(3)} km → ${roundedDistance.toFixed(3)} km (Diff: ${diff.toFixed(3)} km)`);
+        
+        fahrt.distance = roundedDistance;
+        fahrt.routeCoordinates = normalizedCoords;
+        hasChanges = true;
+
+        if (batch && fahrt.docId) {
+            try {
+                const docRef = db
+                    .collection('users')
+                    .doc(username)
+                    .collection('fahrten')
+                    .doc(fahrt.docId);
+                batch.set(docRef, { distance: roundedDistance, routeCoordinates: normalizedCoords }, { merge: true });
+                batchHasUpdates = true;
+            } catch (err) {
+                console.error('Fehler beim Vorbereiten der Distanz-Aktualisierung für', fahrt.docId, err);
+            }
+        }
+    }
+
+    if (batch && batchHasUpdates) {
+        try {
+            await batch.commit();
+            console.log('Aktualisiert: Fahrten in Firestore');
+        } catch (err) {
+            console.error('Fehler beim Aktualisieren der Distanzen in Firestore:', err);
+        }
+    }
+
+    if (hasChanges) {
+        try {
+            saveFahrten();
+            console.log('Aktualisierte Fahrten im LocalStorage gespeichert');
+        } catch (err) {
+            console.error('Fehler beim Aktualisieren der lokalen Distanzen:', err);
+        }
+    }
+
+    return hasChanges;
+}
+
+async function recomputeWithYellowMap(list, username) {
+    // Prüfe ob YellowMap konfiguriert ist
+    if (!window.YELLOWMAP_CONFIG || !window.YELLOWMAP_CONFIG.enabled || !window.YELLOWMAP_CONFIG.apiKey) {
+        console.log('YellowMap nicht aktiviert, überspringe Neuberechnung');
+        return false;
+    }
+
+    if (!Array.isArray(list) || list.length === 0) {
+        return false;
+    }
+
+    console.log(`Starte YellowMap Neuberechnung für ${list.length} Fahrten...`);
+
+    // Warte bis YellowMap API geladen ist
+    let yellowMapReady = false;
+    let attempts = 0;
+    const maxAttempts = 40; // 40 * 500ms = 20 Sekunden
+
+    while (!yellowMapReady && attempts < maxAttempts) {
+        if (typeof ym !== 'undefined' && typeof ym.ready === 'function') {
+            yellowMapReady = true;
+        } else {
+            await new Promise(resolve => setTimeout(resolve, 500));
+            attempts++;
+        }
+    }
+
+    if (!yellowMapReady) {
+        console.warn('YellowMap API konnte nicht geladen werden (Timeout)');
+        return false;
+    }
+
+    let hasChanges = false;
+    let batch = null;
+    let batchHasUpdates = false;
+    const batchSizeLimit = 500;
+    let currentBatchSize = 0;
+
+    if (db && username) {
+        batch = db.batch();
+    }
+
+    const commitBatch = async () => {
+        if (batch && batchHasUpdates && currentBatchSize > 0) {
+            try {
+                await batch.commit();
+                console.log(`Aktualisiert: ${currentBatchSize} Fahrten in Firestore (YellowMap)`);
+            } catch (err) {
+                console.error('Fehler beim Aktualisieren der YellowMap-Distanzen in Firestore:', err);
+            }
+            batch = db.batch();
+            batchHasUpdates = false;
+            currentBatchSize = 0;
+        }
+    };
+
+    // Verarbeite Fahrten sequenziell (um API-Limits zu respektieren)
+    for (let i = 0; i < list.length; i++) {
+        const fahrt = list[i];
+        if (!fahrt) continue;
+
+        // Nur Fahrten mit Start- und Endpunkt berechnen
+        if (!fahrt.startLocation || !fahrt.endLocation) {
+            console.debug(`Fahrt ${fahrt.id} übersprungen (kein Start/Ende)`);
+            continue;
+        }
+
+        const startLat = Number(fahrt.startLocation.lat);
+        const startLng = Number(fahrt.startLocation.lng);
+        const endLat = Number(fahrt.endLocation.lat);
+        const endLng = Number(fahrt.endLocation.lng);
+
+        if (!Number.isFinite(startLat) || !Number.isFinite(startLng) ||
+            !Number.isFinite(endLat) || !Number.isFinite(endLng)) {
+            console.debug(`Fahrt ${fahrt.id} übersprungen (ungültige Koordinaten)`);
+            continue;
+        }
+
+        // Berechne Route mit YellowMap
+        try {
+            const routeDistance = await calculateYellowMapRoute(
+                { lat: startLat, lng: startLng },
+                { lat: endLat, lng: endLng }
+            );
+
+            if (routeDistance === null || !Number.isFinite(routeDistance) || routeDistance <= 0) {
+                console.debug(`Fahrt ${fahrt.id}: YellowMap Route-Berechnung fehlgeschlagen`);
+                continue;
+            }
+
+            const currentDistance = Number(fahrt.distance) || 0;
+            const roundedDistance = Number(routeDistance.toFixed(3));
+            const diff = Math.abs(currentDistance - roundedDistance);
+
+            console.log(`Fahrt ${fahrt.id}: ${currentDistance.toFixed(3)} km → ${roundedDistance.toFixed(3)} km (YellowMap, Diff: ${diff.toFixed(3)} km)`);
+
+            fahrt.distance = roundedDistance;
+            fahrt.routeCalculatedWithYellowMap = true;
+            hasChanges = true;
+
+            // Batch-Limit prüfen
+            if (batch && fahrt.docId) {
+                if (currentBatchSize >= batchSizeLimit) {
+                    await commitBatch();
+                }
+
+                try {
+                    const docRef = db
+                        .collection('users')
+                        .doc(username)
+                        .collection('fahrten')
+                        .doc(fahrt.docId);
+                    batch.set(docRef, {
+                        distance: roundedDistance,
+                        routeCalculatedWithYellowMap: true
+                    }, { merge: true });
+                    batchHasUpdates = true;
+                    currentBatchSize++;
+                } catch (err) {
+                    console.error('Fehler beim Vorbereiten der YellowMap-Aktualisierung für', fahrt.docId, err);
+                }
+            }
+
+            // Kleine Pause zwischen Requests (um API-Limits zu respektieren)
+            if (i < list.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+        } catch (error) {
+            console.error(`Fehler bei YellowMap-Berechnung für Fahrt ${fahrt.id}:`, error);
+        }
+    }
+
+    // Restliche Batches committen
+    await commitBatch();
+
+    if (hasChanges) {
+        try {
+            saveFahrten();
+            console.log('Aktualisierte Fahrten im LocalStorage gespeichert (YellowMap)');
+        } catch (err) {
+            console.error('Fehler beim Speichern der YellowMap-aktualisierten Fahrten:', err);
+        }
+    }
+
+    console.log(`YellowMap Neuberechnung abgeschlossen. ${hasChanges ? 'Änderungen wurden gespeichert.' : 'Keine Änderungen.'}`);
+    return hasChanges;
 }
 
 function getAddressFromCoordinates(lat, lng) {
@@ -421,7 +890,33 @@ function checkActiveFahrt() {
         try {
             currentFahrt = JSON.parse(savedFahrt);
             currentFahrt.startTime = new Date(currentFahrt.startTime);
-            routeCoordinates = currentFahrt.routeCoordinates || [];
+            routeCoordinates = Array.isArray(currentFahrt.routeCoordinates)
+                ? currentFahrt.routeCoordinates
+                : [];
+            currentFahrt.routeCoordinates = routeCoordinates;
+            currentFahrt.distance = Number(currentFahrt.distance) || 0;
+            currentFahrt.pendingDistance = Number(currentFahrt.pendingDistance) || 0;
+
+            if (
+                !currentFahrt.lastRecordedLocation ||
+                typeof currentFahrt.lastRecordedLocation.lat !== 'number' ||
+                typeof currentFahrt.lastRecordedLocation.lng !== 'number'
+            ) {
+                if (routeCoordinates.length > 0) {
+                    const last = routeCoordinates[routeCoordinates.length - 1];
+                    currentFahrt.lastRecordedLocation = {
+                        lat: Number(last[0]),
+                        lng: Number(last[1])
+                    };
+                } else if (currentFahrt.startLocation) {
+                    currentFahrt.lastRecordedLocation = {
+                        lat: Number(currentFahrt.startLocation.lat),
+                        lng: Number(currentFahrt.startLocation.lng)
+                    };
+                } else {
+                    currentFahrt.lastRecordedLocation = null;
+                }
+            }
 
             // Watch wieder starten
             watchId = navigator.geolocation.watchPosition(
@@ -919,6 +1414,7 @@ function normalizeFahrtFromFirestore(id, data) {
     const endTime = data.endTime ? toDate(data.endTime) : null;
     return {
         id: data.id || id,
+        docId: id,
         startTime,
         endTime,
         startLocation: data.startLocation,
@@ -933,7 +1429,8 @@ function normalizeFahrtFromFirestore(id, data) {
                 return null;
             }).filter(Boolean)
             : [],
-        distance: data.distance || 0
+        distance: data.distance || 0,
+        routeCalculatedWithYellowMap: data.routeCalculatedWithYellowMap || false
     };
 }
 
@@ -965,7 +1462,8 @@ async function saveFahrtToFirestore(username, fahrt) {
                 return null;
             }).filter(Boolean)
             : [],
-        distance: fahrt.distance || 0
+        distance: fahrt.distance || 0,
+        routeCalculatedWithYellowMap: fahrt.routeCalculatedWithYellowMap || false
     };
     await docRef.add(payload);
 }
@@ -989,64 +1487,137 @@ function showFahrtDetails(fahrtId) {
     document.getElementById('detailStartLocation').textContent = fahrt.startAddress || 'Unbekannt';
     document.getElementById('detailEndLocation').textContent = fahrt.endAddress || (fahrt.endTime ? 'Unbekannt' : 'Noch nicht beendet');
 
-    // Karte anzeigen
-    setTimeout(() => {
-        showMap(fahrt);
-    }, 100);
-
     // Modal anzeigen
-    document.getElementById('fahrtModal').style.display = 'block';
+    const modal = document.getElementById('fahrtModal');
+    modal.style.display = 'block';
+
+    // Karte anzeigen - warten bis Modal sichtbar ist
+    requestAnimationFrame(() => {
+        setTimeout(() => {
+            showMap(fahrt);
+        }, 200);
+    });
 }
+
+let currentMapInstance = null;
 
 function showMap(fahrt) {
     const mapContainer = document.getElementById('detailMap');
+    if (!mapContainer) {
+        console.error('Karten-Container nicht gefunden');
+        return;
+    }
+
+    // Alte Karte entfernen
+    if (currentMapInstance) {
+        try {
+            currentMapInstance.remove();
+        } catch (e) {
+            console.warn('Fehler beim Entfernen der alten Karte:', e);
+        }
+        currentMapInstance = null;
+    }
+
     mapContainer.innerHTML = ''; // Karte leeren
 
-    if (!fahrt.routeCoordinates || fahrt.routeCoordinates.length === 0) {
+    // Prüfen ob Leaflet geladen ist
+    if (typeof L === 'undefined') {
+        mapContainer.innerHTML = '<p>Karten-Bibliothek wird geladen...</p>';
+        setTimeout(() => showMap(fahrt), 500);
+        return;
+    }
+
+    if (!fahrt.startLocation || !Number.isFinite(fahrt.startLocation.lat) || !Number.isFinite(fahrt.startLocation.lng)) {
+        mapContainer.innerHTML = '<p>Keine Startposition verfügbar</p>';
+        return;
+    }
+
+    const hasRoute = Array.isArray(fahrt.routeCoordinates) && fahrt.routeCoordinates.length > 0;
+    if (!hasRoute && !fahrt.endLocation) {
         mapContainer.innerHTML = '<p>Keine Routendaten verfügbar</p>';
         return;
     }
 
-    // Leaflet-Karte erstellen
-    const map = L.map('detailMap').setView(
-        [fahrt.startLocation.lat, fahrt.startLocation.lng],
-        13
-    );
+    try {
+        // Leaflet-Karte erstellen
+        const map = L.map('detailMap', {
+            preferCanvas: true
+        }).setView(
+            [fahrt.startLocation.lat, fahrt.startLocation.lng],
+            13
+        );
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors'
-    }).addTo(map);
+        currentMapInstance = map;
 
-    // Route als Polyline zeichnen
-    if (fahrt.routeCoordinates.length > 1) {
-        const polyline = L.polyline(fahrt.routeCoordinates, {
-            color: '#667eea',
-            weight: 5,
-            opacity: 0.7
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors',
+            maxZoom: 19
         }).addTo(map);
 
-        // Karte an Route anpassen
-        map.fitBounds(polyline.getBounds());
-    }
+        // Route als Polyline zeichnen
+        if (hasRoute && fahrt.routeCoordinates.length > 1) {
+            const polyline = L.polyline(fahrt.routeCoordinates, {
+                color: '#667eea',
+                weight: 5,
+                opacity: 0.7
+            }).addTo(map);
 
-    // Start-Marker
-    const startMarker = L.marker([fahrt.startLocation.lat, fahrt.startLocation.lng])
-        .addTo(map)
-        .bindPopup(`Start: ${fahrt.startAddress || 'Unbekannt'}`);
+            // Karte an Route anpassen
+            try {
+                map.fitBounds(polyline.getBounds(), { padding: [20, 20] });
+            } catch (e) {
+                console.warn('Fehler beim Anpassen der Karte:', e);
+            }
+        } else if (fahrt.endLocation) {
+            // Nur Start- und Endpunkt vorhanden
+            const bounds = L.latLngBounds(
+                [fahrt.startLocation.lat, fahrt.startLocation.lng],
+                [fahrt.endLocation.lat, fahrt.endLocation.lng]
+            );
+            map.fitBounds(bounds, { padding: [20, 20] });
+        }
 
-    // End-Marker (falls vorhanden)
-    if (fahrt.endLocation) {
-        const endMarker = L.marker([fahrt.endLocation.lat, fahrt.endLocation.lng])
+        // Start-Marker
+        const startMarker = L.marker([fahrt.startLocation.lat, fahrt.startLocation.lng])
             .addTo(map)
-            .bindPopup(`Ziel: ${fahrt.endAddress || 'Unbekannt'}`);
+            .bindPopup(`Start: ${fahrt.startAddress || 'Unbekannt'}`);
+
+        // End-Marker (falls vorhanden)
+        if (fahrt.endLocation && Number.isFinite(fahrt.endLocation.lat) && Number.isFinite(fahrt.endLocation.lng)) {
+            const endMarker = L.marker([fahrt.endLocation.lat, fahrt.endLocation.lng])
+                .addTo(map)
+                .bindPopup(`Ziel: ${fahrt.endAddress || 'Unbekannt'}`);
+        }
+
+        // Karte invalidieren, damit sie richtig gerendert wird
+        setTimeout(() => {
+            if (currentMapInstance) {
+                currentMapInstance.invalidateSize();
+            }
+        }, 300);
+    } catch (error) {
+        console.error('Fehler beim Erstellen der Karte:', error);
+        mapContainer.innerHTML = '<p>Fehler beim Laden der Karte. Bitte Seite neu laden.</p>';
     }
 }
 
 function closeModal() {
     document.getElementById('fahrtModal').style.display = 'none';
+    
     // Karte entfernen
+    if (currentMapInstance) {
+        try {
+            currentMapInstance.remove();
+        } catch (e) {
+            console.warn('Fehler beim Entfernen der Karte:', e);
+        }
+        currentMapInstance = null;
+    }
+    
     const mapContainer = document.getElementById('detailMap');
-    mapContainer.innerHTML = '';
+    if (mapContainer) {
+        mapContainer.innerHTML = '';
+    }
 }
 
 function formatDate(date) {

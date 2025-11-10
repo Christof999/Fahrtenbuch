@@ -138,7 +138,32 @@
     <!-- Firebase (Compat) -->
     <script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore-compat.js"></script>
+    <script src="config.js"></script>
     <script src="firebase.js"></script>
+    <!-- YellowMap SmartMaps API (wird nur geladen wenn API-Key vorhanden) -->
+    <script>
+        if (window.YELLOWMAP_CONFIG && window.YELLOWMAP_CONFIG.apiKey && window.YELLOWMAP_CONFIG.enabled) {
+            const script = document.createElement('script');
+            // API-Key könnte bereits URL-encodiert sein, daher prüfen und nur einmal encodieren
+            let apiKey = window.YELLOWMAP_CONFIG.apiKey;
+            // Wenn der Key bereits encodiert ist (enthält %), verwende ihn direkt, sonst encodiere
+            if (!apiKey.includes('%')) {
+                apiKey = encodeURIComponent(apiKey);
+            }
+            script.src = `https://www.yellowmap.de/api_rst/api/loader?apiKey=${apiKey}&libraries=${window.YELLOWMAP_CONFIG.library}`;
+            script.async = true;
+            script.onerror = function(event) {
+                console.error('Fehler beim Laden der YellowMap API:', event);
+                console.error('API-Key:', window.YELLOWMAP_CONFIG.apiKey ? 'vorhanden' : 'fehlt');
+                console.error('URL:', script.src);
+                console.error('Bitte API-Key und URL überprüfen. Kontakt: geosolutions@yellowmap.de');
+            };
+            script.onload = function() {
+                console.log('YellowMap API erfolgreich geladen');
+            };
+            document.head.appendChild(script);
+        }
+    </script>
     <script src="main.js"></script>
 </body>
 </html>
