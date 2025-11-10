@@ -1,14 +1,15 @@
 // Konfiguration für externe APIs
 
-// OpenRouteService API Konfiguration
-// Kostenlos und Open Source: https://openrouteservice.org/
-// Kein API-Key benötigt für normale Nutzung (optional für höhere Limits)
+// Routing API Konfiguration
+// OSRM (Open Source Routing Machine) - Kostenlos, Open Source, kein API-Key benötigt
 window.ROUTING_CONFIG = window.ROUTING_CONFIG || {
-    provider: 'openrouteservice', // 'openrouteservice' oder 'graphhopper'
+    provider: 'osrm', // 'osrm' (kostenlos, kein API-Key), 'openrouteservice' (benötigt API-Key), 'graphhopper' (benötigt API-Key)
     enabled: true,
-    // Optional: API-Key für höhere Limits (kostenlos erhältlich auf openrouteservice.org)
-    apiKey: '', // Leer lassen für kostenlose Nutzung ohne Limits
-    // OpenRouteService Endpoint (Standard: kostenloser Public API)
+    // OSRM Public Server (kostenlos, kein API-Key benötigt)
+    osrmEndpoint: 'https://router.project-osrm.org/route/v1/driving',
+    // Optional: OpenRouteService API-Key (falls provider='openrouteservice')
+    apiKey: '',
+    // Optional: OpenRouteService Endpoint
     endpoint: 'https://api.openrouteservice.org/v2/directions/driving-car'
 };
 

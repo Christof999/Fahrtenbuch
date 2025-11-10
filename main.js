@@ -456,9 +456,9 @@ function handlePositionError(error) {
     alert(message);
 }
 
-// ========== Routing API Integration (OpenRouteService) ==========
-// OpenRouteService: Kostenlos, Open Source, keine API-Keys benötigt
-// Dokumentation: https://openrouteservice.org/dev/#/api-docs/directions
+// ========== Routing API Integration ==========
+// OSRM: Kostenlos, Open Source, kein API-Key benötigt
+// Dokumentation: http://project-osrm.org/docs/v5.24.0/api/
 async function calculateRouteDistance(startLocation, endLocation) {
     // Prüfe ob Routing konfiguriert und aktiviert ist
     if (!window.ROUTING_CONFIG || !window.ROUTING_CONFIG.enabled) {
@@ -467,17 +467,65 @@ async function calculateRouteDistance(startLocation, endLocation) {
 
     const config = window.ROUTING_CONFIG;
     
-    // OpenRouteService API
+    // OSRM API (Standard - kostenlos, kein API-Key)
+    if (config.provider === 'osrm' || !config.provider) {
+        return calculateOSRMRoute(startLocation, endLocation);
+    }
+    
+    // OpenRouteService API (benötigt API-Key)
     if (config.provider === 'openrouteservice') {
         return calculateOpenRouteServiceRoute(startLocation, endLocation);
     }
     
-    // GraphHopper API (Alternative)
+    // GraphHopper API (benötigt API-Key)
     if (config.provider === 'graphhopper') {
         return calculateGraphHopperRoute(startLocation, endLocation);
     }
 
     return null;
+}
+
+// OSRM (Open Source Routing Machine) - Kostenlos, Open Source, kein API-Key benötigt
+// Dokumentation: http://project-osrm.org/docs/v5.24.0/api/
+async function calculateOSRMRoute(startLocation, endLocation) {
+    const config = window.ROUTING_CONFIG;
+    const endpoint = config.osrmEndpoint || 'https://router.project-osrm.org/route/v1/driving';
+    
+    // OSRM verwendet lng,lat Format und trennt mit ; statt |
+    const url = `${endpoint}/${startLocation.lng},${startLocation.lat};${endLocation.lng},${endLocation.lat}?overview=false&alternatives=false`;
+
+    try {
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: {
+                'Accept': 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('OSRM API Fehler:', response.status, response.statusText, errorText);
+            return null;
+        }
+
+        const data = await response.json();
+        
+        if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
+            const route = data.routes[0];
+            if (route.distance) {
+                const distanceMeters = route.distance;
+                const distanceKm = distanceMeters / 1000;
+                console.log('OSRM Route-Distanz berechnet:', distanceKm.toFixed(3), 'km');
+                return distanceKm;
+            }
+        }
+
+        console.warn('OSRM: Keine Distanz im Response gefunden', data);
+        return null;
+    } catch (error) {
+        console.error('Fehler bei OSRM API Request:', error);
+        return null;
+    }
 }
 
 // OpenRouteService API - Kostenlos, Open Source
