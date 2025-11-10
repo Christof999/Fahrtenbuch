@@ -510,58 +510,42 @@ async function calculateYellowMapRoute(startLocation, endLocation) {
                         const start = LatLng(startLocation.lat, startLocation.lng);
                         const end = LatLng(endLocation.lat, endLocation.lng);
 
-                        console.log('YellowMap Route-Berechnung startet:', { start, end });
+                        console.log('YellowMap Route-Berechnung startet:', { start, end, startType: typeof start, endType: typeof end });
 
-                        // Rufe die routing-Funktion direkt auf
-                        // Die Funktion erwartet: routing(waypoints, options, callback)
-                        // waypoints ist ein Array von LatLng-Objekten
-                        routing([start, end], {
-                            travelMode: 'driving' // oder 'car', 'auto' - je nach API
-                        }, function(result) {
-                            console.log('YellowMap Route-Ergebnis:', result);
-                            
-                            if (!result) {
-                                console.warn('YellowMap Route-Berechnung: Kein Ergebnis');
-                                resolve(null);
-                                return;
-                            }
-
-                            // Versuche verschiedene mögliche Ergebnis-Strukturen
-                            let distance = null;
-                            
-                            // Struktur 1: result.distance (in Metern)
-                            if (result.distance && typeof result.distance === 'number') {
-                                distance = result.distance / 1000; // in km
-                            }
-                            // Struktur 2: result.routes[0].legs[].distance
-                            else if (result.routes && Array.isArray(result.routes) && result.routes.length > 0) {
-                                const route = result.routes[0];
-                                if (route.legs && Array.isArray(route.legs)) {
-                                    let totalDistance = 0;
-                                    route.legs.forEach(leg => {
-                                        if (leg.distance) {
-                                            const dist = typeof leg.distance === 'number' ? leg.distance : (leg.distance.value || 0);
-                                            totalDistance += dist;
-                                        }
+                        // Versuche verschiedene Parameter-Strukturen
+                        // Variante 1: routing(waypoints, options, callback)
+                        // Variante 2: routing(waypoints, callback) - ohne options
+                        // Variante 3: routing(origin, destination, options, callback)
+                        
+                        try {
+                            // Versuche zuerst mit options
+                            routing([start, end], {
+                                travelMode: 'driving'
+                            }, function(result) {
+                                handleRoutingResult(result, resolve);
+                            });
+                        } catch (error1) {
+                            console.log('Variant 1 fehlgeschlagen, versuche Variante 2:', error1);
+                            try {
+                                // Versuche ohne options
+                                routing([start, end], function(result) {
+                                    handleRoutingResult(result, resolve);
+                                });
+                            } catch (error2) {
+                                console.log('Variant 2 fehlgeschlagen, versuche Variante 3:', error2);
+                                try {
+                                    // Versuche mit separaten origin/destination
+                                    routing(start, end, {
+                                        travelMode: 'driving'
+                                    }, function(result) {
+                                        handleRoutingResult(result, resolve);
                                     });
-                                    distance = totalDistance / 1000; // in km
+                                } catch (error3) {
+                                    console.error('Alle Varianten fehlgeschlagen:', error3);
+                                    resolve(null);
                                 }
                             }
-                            // Struktur 3: result.totalDistance
-                            else if (result.totalDistance) {
-                                distance = typeof result.totalDistance === 'number' 
-                                    ? result.totalDistance / 1000 
-                                    : (result.totalDistance.value || 0) / 1000;
-                            }
-
-                            if (distance !== null && Number.isFinite(distance) && distance > 0) {
-                                console.log('YellowMap Route-Distanz berechnet:', distance.toFixed(3), 'km');
-                                resolve(distance);
-                            } else {
-                                console.warn('YellowMap Route-Berechnung: Keine gültige Distanz gefunden');
-                                resolve(null);
-                            }
-                        });
+                        }
                     } catch (error) {
                         console.error('Fehler bei YellowMap Route-Berechnung:', error);
                         resolve(null);
@@ -580,6 +564,56 @@ async function calculateYellowMapRoute(startLocation, endLocation) {
 
         checkYellowMap();
     });
+}
+
+function handleRoutingResult(result, resolve) {
+    console.log('YellowMap Route-Ergebnis:', result);
+    
+    if (!result) {
+        console.warn('YellowMap Route-Berechnung: Kein Ergebnis');
+        resolve(null);
+        return;
+    }
+
+    // Versuche verschiedene mögliche Ergebnis-Strukturen
+    let distance = null;
+    
+    // Struktur 1: result.distance (in Metern)
+    if (result.distance && typeof result.distance === 'number') {
+        distance = result.distance / 1000; // in km
+    }
+    // Struktur 2: result.routes[0].legs[].distance
+    else if (result.routes && Array.isArray(result.routes) && result.routes.length > 0) {
+        const route = result.routes[0];
+        if (route.legs && Array.isArray(route.legs)) {
+            let totalDistance = 0;
+            route.legs.forEach(leg => {
+                if (leg.distance) {
+                    const dist = typeof leg.distance === 'number' ? leg.distance : (leg.distance.value || 0);
+                    totalDistance += dist;
+                }
+            });
+            distance = totalDistance / 1000; // in km
+        }
+    }
+    // Struktur 3: result.totalDistance
+    else if (result.totalDistance) {
+        distance = typeof result.totalDistance === 'number' 
+            ? result.totalDistance / 1000 
+            : (result.totalDistance.value || 0) / 1000;
+    }
+    // Struktur 4: result.length (falls direkt in Metern)
+    else if (result.length && typeof result.length === 'number') {
+        distance = result.length / 1000;
+    }
+
+    if (distance !== null && Number.isFinite(distance) && distance > 0) {
+        console.log('YellowMap Route-Distanz berechnet:', distance.toFixed(3), 'km');
+        resolve(distance);
+    } else {
+        console.warn('YellowMap Route-Berechnung: Keine gültige Distanz gefunden. Ergebnis-Struktur:', Object.keys(result));
+        resolve(null);
+    }
 }
 
 function calculateDistance(lat1, lon1, lat2, lon2) {
