@@ -483,28 +483,29 @@ async function calculateYellowMapRoute(startLocation, endLocation) {
                             return;
                         }
 
-                        // Versuche verschiedene mögliche Strukturen
-                        let provider = modules.provider;
-                        if (!provider && modules.routing) {
-                            provider = modules.routing;
-                        }
-                        if (!provider && modules.RouteService) {
-                            provider = { RouteService: modules.RouteService };
-                        }
-                        
-                        if (!provider) {
-                            console.warn('YellowMap Provider nicht verfügbar. Verfügbare Module:', Object.keys(modules));
+                        // Das Routing-Modul ist direkt in modules.routing verfügbar
+                        const routing = modules.routing;
+                        if (!routing) {
+                            console.warn('YellowMap routing Modul nicht verfügbar. Verfügbare Module:', Object.keys(modules));
                             resolve(null);
                             return;
                         }
 
-                        console.log('YellowMap provider:', provider);
-                        console.log('YellowMap provider keys:', Object.keys(provider));
+                        console.log('YellowMap routing:', routing);
+                        console.log('YellowMap routing keys:', Object.keys(routing));
 
-                        // Prüfe verschiedene mögliche Service-Namen
-                        const RouteService = provider.RouteService || provider.Route || provider.route || provider.routing;
+                        // Provider für LatLng etc. ist in modules.provider
+                        const provider = modules.provider;
+                        if (!provider) {
+                            console.warn('YellowMap provider nicht verfügbar');
+                            resolve(null);
+                            return;
+                        }
+
+                        // Prüfe verschiedene mögliche Routing-Service-Namen
+                        const RouteService = routing.RouteService || routing.Route || routing.route || routing.calculateRoute;
                         if (!RouteService) {
-                            console.warn('YellowMap RouteService nicht verfügbar. Verfügbare Services:', Object.keys(provider));
+                            console.warn('YellowMap RouteService nicht verfügbar. Verfügbare routing-Methoden:', Object.keys(routing));
                             resolve(null);
                             return;
                         }
