@@ -492,7 +492,11 @@ async function calculateOpenRouteServiceRoute(startLocation, endLocation) {
         [endLocation.lng, endLocation.lat]
     ];
 
-    const url = `${endpoint}?api_key=${config.apiKey || ''}&coordinates=${coordinates.map(c => c.join(',')).join('|')}`;
+    // OpenRouteService URL-Format: coordinates=lng1,lat1|lng2,lat2
+    const coordinatesStr = coordinates.map(c => c.join(',')).join('|');
+    const url = config.apiKey 
+        ? `${endpoint}?api_key=${config.apiKey}&coordinates=${coordinatesStr}`
+        : `${endpoint}?coordinates=${coordinatesStr}`;
 
     try {
         const response = await fetch(url, {
