@@ -103,8 +103,8 @@ document.addEventListener('DOMContentLoaded', function() {
             })
             .then(hasChanges => {
                 if (hasChanges) renderLists();
-                // Nach GPS-Neuberechnung: YellowMap-Routen berechnen
-                return recomputeWithYellowMap(fahrten, username);
+                // Nach GPS-Neuberechnung: Routing-API-Routen berechnen
+                return recomputeWithRoutingAPI(fahrten, username);
             })
             .then(hasChanges => {
                 if (hasChanges) renderLists();
@@ -116,7 +116,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 recomputeStoredDistances(fahrten, username)
                     .then(hasChanges => {
                         if (hasChanges) renderLists();
-                        return recomputeWithYellowMap(fahrten, username);
+                        return recomputeWithRoutingAPI(fahrten, username);
                     })
                     .then(hasChanges => {
                         if (hasChanges) renderLists();
@@ -129,7 +129,7 @@ document.addEventListener('DOMContentLoaded', function() {
         recomputeStoredDistances(fahrten, username)
             .then(hasChanges => {
                 if (hasChanges) renderLists();
-                return recomputeWithYellowMap(fahrten, username);
+                return recomputeWithRoutingAPI(fahrten, username);
             })
             .then(hasChanges => {
                 if (hasChanges) renderLists();
@@ -371,26 +371,26 @@ async function finishFahrt(endLocation, endAddress) {
     currentFahrt.lastRecordedLocation = endLocation;
     currentFahrt.pendingDistance = 0;
 
-    // Versuche zuerst YellowMap Route zu berechnen, sonst Fallback auf GPS-Punkte
+    // Versuche zuerst Routing-API Route zu berechnen, sonst Fallback auf GPS-Punkte
     try {
-        const routeDistance = await calculateYellowMapRoute(
+        const routeDistance = await calculateRouteDistance(
             currentFahrt.startLocation,
             endLocation
         );
         if (routeDistance !== null && Number.isFinite(routeDistance) && routeDistance > 0) {
             currentFahrt.distance = routeDistance;
-            currentFahrt.routeCalculatedWithYellowMap = true;
-            console.log('Route mit YellowMap berechnet:', routeDistance.toFixed(3), 'km');
+            currentFahrt.routeCalculatedWithRoutingAPI = true;
+            console.log('Route mit Routing-API berechnet:', routeDistance.toFixed(3), 'km');
         } else {
             // Fallback auf GPS-Punkte
             currentFahrt.distance = computeRouteDistance(currentFahrt.routeCoordinates);
-            currentFahrt.routeCalculatedWithYellowMap = false;
+            currentFahrt.routeCalculatedWithRoutingAPI = false;
             console.log('Route mit GPS-Punkten berechnet:', currentFahrt.distance.toFixed(3), 'km');
         }
     } catch (error) {
-        console.warn('YellowMap Route-Berechnung fehlgeschlagen, nutze GPS-Punkte:', error);
+        console.warn('Routing-API Route-Berechnung fehlgeschlagen, nutze GPS-Punkte:', error);
         currentFahrt.distance = computeRouteDistance(currentFahrt.routeCoordinates);
-        currentFahrt.routeCalculatedWithYellowMap = false;
+        currentFahrt.routeCalculatedWithRoutingAPI = false;
     }
 
     delete currentFahrt.pendingDistance;
@@ -456,123 +456,116 @@ function handlePositionError(error) {
     alert(message);
 }
 
-// ========== YellowMap Route-Berechnung ==========
-async function calculateYellowMapRoute(startLocation, endLocation) {
-    // Prüfe ob YellowMap konfiguriert und verfügbar ist
-    if (!window.YELLOWMAP_CONFIG || !window.YELLOWMAP_CONFIG.enabled) {
+// ========== Routing API Integration (OpenRouteService) ==========
+// OpenRouteService: Kostenlos, Open Source, keine API-Keys benötigt
+// Dokumentation: https://openrouteservice.org/dev/#/api-docs/directions
+async function calculateRouteDistance(startLocation, endLocation) {
+    // Prüfe ob Routing konfiguriert und aktiviert ist
+    if (!window.ROUTING_CONFIG || !window.ROUTING_CONFIG.enabled) {
         return null;
     }
 
-    // Verwende Backend SOAP API wenn konfiguriert
-    if (window.YELLOWMAP_CONFIG.useBackendAPI) {
-        return calculateYellowMapRouteBackend(startLocation, endLocation);
+    const config = window.ROUTING_CONFIG;
+    
+    // OpenRouteService API
+    if (config.provider === 'openrouteservice') {
+        return calculateOpenRouteServiceRoute(startLocation, endLocation);
+    }
+    
+    // GraphHopper API (Alternative)
+    if (config.provider === 'graphhopper') {
+        return calculateGraphHopperRoute(startLocation, endLocation);
     }
 
-    // Fallback auf JavaScript API (falls implementiert)
     return null;
 }
 
-// YellowMap Backend SOAP API - CalculateRouteLocation
-// Dokumentation: https://docs.yellowmap.com/smartmaps-backend/anleitung/routing-soap/
-async function calculateYellowMapRouteBackend(startLocation, endLocation) {
-    const config = window.YELLOWMAP_CONFIG;
+// OpenRouteService API - Kostenlos, Open Source
+// Dokumentation: https://openrouteservice.org/dev/#/api-docs/directions
+async function calculateOpenRouteServiceRoute(startLocation, endLocation) {
+    const config = window.ROUTING_CONFIG;
+    const endpoint = config.endpoint || 'https://api.openrouteservice.org/v2/directions/driving-car';
     
-    // Prüfe ob SystemPartner und SecurityID vorhanden sind
-    if (!config.systemPartner || !config.securityID) {
-        console.warn('YellowMap Backend API: SystemPartner oder SecurityID fehlt');
-        console.warn('Bitte SystemPartner und SecurityID in config.js eintragen');
-        return null;
-    }
+    // Koordinaten im Format: [lng, lat] (OpenRouteService verwendet lng,lat statt lat,lng!)
+    const coordinates = [
+        [startLocation.lng, startLocation.lat],
+        [endLocation.lng, endLocation.lat]
+    ];
 
-    // SOAP Request für CalculateRouteLocation
-    // Endpoint: https://www.yellowmap.de/soap/services/RoutingService
-    const soapEnvelope = `<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:rout="http://services.yellowmap.de/RoutingService">
-   <soapenv:Header/>
-   <soapenv:Body>
-      <rout:CalculateRouteLocation>
-         <rout:SystemPartner>${escapeXml(config.systemPartner)}</rout:SystemPartner>
-         <rout:SecurityID>${escapeXml(config.securityID)}</rout:SecurityID>
-         <rout:Channel>Fahrtenbuch</rout:Channel>
-         <rout:CoordFormatOut>WGS84</rout:CoordFormatOut>
-         <rout:IsoLocale>de-DE</rout:IsoLocale>
-         <rout:CarType>CAR</rout:CarType>
-         <rout:RouteOptimization>FASTEST</rout:RouteOptimization>
-         <rout:RouteStartLat>${startLocation.lat}</rout:RouteStartLat>
-         <rout:RouteStartLon>${startLocation.lng}</rout:RouteStartLon>
-         <rout:RouteEndLat>${endLocation.lat}</rout:RouteEndLat>
-         <rout:RouteEndLon>${endLocation.lng}</rout:RouteEndLon>
-      </rout:CalculateRouteLocation>
-   </soapenv:Body>
-</soapenv:Envelope>`;
+    const url = `${endpoint}?api_key=${config.apiKey || ''}&coordinates=${coordinates.map(c => c.join(',')).join('|')}`;
 
     try {
-        const response = await fetch('https://www.yellowmap.de/soap/services/RoutingService', {
-            method: 'POST',
+        const response = await fetch(url, {
+            method: 'GET',
             headers: {
-                'Content-Type': 'text/xml; charset=utf-8',
-                'SOAPAction': 'http://services.yellowmap.de/RoutingService/CalculateRouteLocation'
-            },
-            body: soapEnvelope
+                'Accept': 'application/json, application/geo+json, application/gpx+xml, img/png; charset=utf-8'
+            }
         });
 
         if (!response.ok) {
-            console.error('YellowMap Backend API Fehler:', response.status, response.statusText);
+            const errorText = await response.text();
+            console.error('OpenRouteService API Fehler:', response.status, response.statusText, errorText);
             return null;
         }
 
-        const xmlText = await response.text();
-        console.log('YellowMap Backend API Response:', xmlText);
-
-        // Parse XML Response
-        const parser = new DOMParser();
-        const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
-
-        // Suche nach RouteDistance im Response
-        const distanceElement = xmlDoc.querySelector('RouteDistance') || 
-                               xmlDoc.querySelector('Distance') ||
-                               xmlDoc.querySelector('*[local-name()="RouteDistance"]') ||
-                               xmlDoc.querySelector('*[local-name()="Distance"]');
-
-        if (distanceElement) {
-            const distanceText = distanceElement.textContent || distanceElement.innerText;
-            const distanceMeters = parseFloat(distanceText);
-            
-            if (Number.isFinite(distanceMeters) && distanceMeters > 0) {
+        const data = await response.json();
+        
+        if (data.routes && data.routes.length > 0) {
+            const route = data.routes[0];
+            if (route.summary && route.summary.distance) {
+                const distanceMeters = route.summary.distance;
                 const distanceKm = distanceMeters / 1000;
-                console.log('YellowMap Route-Distanz berechnet:', distanceKm.toFixed(3), 'km');
+                console.log('OpenRouteService Route-Distanz berechnet:', distanceKm.toFixed(3), 'km');
                 return distanceKm;
             }
         }
 
-        // Fallback: Suche nach anderen möglichen Feldern
-        const allElements = xmlDoc.querySelectorAll('*');
-        for (const elem of allElements) {
-            const text = elem.textContent || elem.innerText;
-            const num = parseFloat(text);
-            if (Number.isFinite(num) && num > 100 && num < 10000000) { // Plausibler Bereich für Meter
-                const distanceKm = num / 1000;
-                console.log('YellowMap Route-Distanz gefunden (Fallback):', distanceKm.toFixed(3), 'km');
-                return distanceKm;
-            }
-        }
-
-        console.warn('YellowMap Backend API: Keine Distanz im Response gefunden');
+        console.warn('OpenRouteService: Keine Distanz im Response gefunden');
         return null;
     } catch (error) {
-        console.error('Fehler bei YellowMap Backend API Request:', error);
+        console.error('Fehler bei OpenRouteService API Request:', error);
         return null;
     }
 }
 
-function escapeXml(text) {
-    if (!text) return '';
-    return String(text)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&apos;');
+// GraphHopper API - Alternative (kostenlos für kleine Volumen)
+// Dokumentation: https://docs.graphhopper.com/#tag/Routing-API
+async function calculateGraphHopperRoute(startLocation, endLocation) {
+    const config = window.ROUTING_CONFIG;
+    const apiKey = config.apiKey || '';
+    
+    // GraphHopper verwendet lat,lng Format
+    const url = `https://graphhopper.com/api/1/route?point=${startLocation.lat},${startLocation.lng}&point=${endLocation.lat},${endLocation.lng}&vehicle=car&key=${apiKey}`;
+
+    try {
+        const response = await fetch(url, {
+            method: 'GET'
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('GraphHopper API Fehler:', response.status, response.statusText, errorText);
+            return null;
+        }
+
+        const data = await response.json();
+        
+        if (data.paths && data.paths.length > 0) {
+            const path = data.paths[0];
+            if (path.distance) {
+                const distanceMeters = path.distance;
+                const distanceKm = distanceMeters / 1000;
+                console.log('GraphHopper Route-Distanz berechnet:', distanceKm.toFixed(3), 'km');
+                return distanceKm;
+            }
+        }
+
+        console.warn('GraphHopper: Keine Distanz im Response gefunden');
+        return null;
+    } catch (error) {
+        console.error('Fehler bei GraphHopper API Request:', error);
+        return null;
+    }
 }
 
 function calculateDistance(lat1, lon1, lat2, lon2) {
@@ -736,10 +729,10 @@ async function recomputeStoredDistances(list, username) {
     return hasChanges;
 }
 
-async function recomputeWithYellowMap(list, username) {
-    // Prüfe ob YellowMap konfiguriert ist
-    if (!window.YELLOWMAP_CONFIG || !window.YELLOWMAP_CONFIG.enabled || !window.YELLOWMAP_CONFIG.apiKey) {
-        console.log('YellowMap nicht aktiviert, überspringe Neuberechnung');
+async function recomputeWithRoutingAPI(list, username) {
+    // Prüfe ob Routing-API konfiguriert ist
+    if (!window.ROUTING_CONFIG || !window.ROUTING_CONFIG.enabled) {
+        console.log('Routing-API nicht aktiviert, überspringe Neuberechnung');
         return false;
     }
 
@@ -747,26 +740,7 @@ async function recomputeWithYellowMap(list, username) {
         return false;
     }
 
-    console.log(`Starte YellowMap Neuberechnung für ${list.length} Fahrten...`);
-
-    // Warte bis YellowMap API geladen ist
-    let yellowMapReady = false;
-    let attempts = 0;
-    const maxAttempts = 40; // 40 * 500ms = 20 Sekunden
-
-    while (!yellowMapReady && attempts < maxAttempts) {
-        if (typeof ym !== 'undefined' && typeof ym.ready === 'function') {
-            yellowMapReady = true;
-        } else {
-            await new Promise(resolve => setTimeout(resolve, 500));
-            attempts++;
-        }
-    }
-
-    if (!yellowMapReady) {
-        console.warn('YellowMap API konnte nicht geladen werden (Timeout)');
-        return false;
-    }
+    console.log(`Starte Routing-API Neuberechnung für ${list.length} Fahrten...`);
 
     let hasChanges = false;
     let batch = null;
@@ -782,9 +756,9 @@ async function recomputeWithYellowMap(list, username) {
         if (batch && batchHasUpdates && currentBatchSize > 0) {
             try {
                 await batch.commit();
-                console.log(`Aktualisiert: ${currentBatchSize} Fahrten in Firestore (YellowMap)`);
+                console.log(`Aktualisiert: ${currentBatchSize} Fahrten in Firestore (Routing-API)`);
             } catch (err) {
-                console.error('Fehler beim Aktualisieren der YellowMap-Distanzen in Firestore:', err);
+                console.error('Fehler beim Aktualisieren der Routing-API-Distanzen in Firestore:', err);
             }
             batch = db.batch();
             batchHasUpdates = false;
@@ -814,15 +788,15 @@ async function recomputeWithYellowMap(list, username) {
             continue;
         }
 
-        // Berechne Route mit YellowMap
+        // Berechne Route mit Routing-API
         try {
-            const routeDistance = await calculateYellowMapRoute(
+            const routeDistance = await calculateRouteDistance(
                 { lat: startLat, lng: startLng },
                 { lat: endLat, lng: endLng }
             );
 
             if (routeDistance === null || !Number.isFinite(routeDistance) || routeDistance <= 0) {
-                console.debug(`Fahrt ${fahrt.id}: YellowMap Route-Berechnung fehlgeschlagen`);
+                console.debug(`Fahrt ${fahrt.id}: Routing-API Route-Berechnung fehlgeschlagen`);
                 continue;
             }
 
@@ -830,10 +804,10 @@ async function recomputeWithYellowMap(list, username) {
             const roundedDistance = Number(routeDistance.toFixed(3));
             const diff = Math.abs(currentDistance - roundedDistance);
 
-            console.log(`Fahrt ${fahrt.id}: ${currentDistance.toFixed(3)} km → ${roundedDistance.toFixed(3)} km (YellowMap, Diff: ${diff.toFixed(3)} km)`);
+            console.log(`Fahrt ${fahrt.id}: ${currentDistance.toFixed(3)} km → ${roundedDistance.toFixed(3)} km (Routing-API, Diff: ${diff.toFixed(3)} km)`);
 
             fahrt.distance = roundedDistance;
-            fahrt.routeCalculatedWithYellowMap = true;
+            fahrt.routeCalculatedWithRoutingAPI = true;
             hasChanges = true;
 
             // Batch-Limit prüfen
@@ -850,12 +824,12 @@ async function recomputeWithYellowMap(list, username) {
                         .doc(fahrt.docId);
                     batch.set(docRef, {
                         distance: roundedDistance,
-                        routeCalculatedWithYellowMap: true
+                        routeCalculatedWithRoutingAPI: true
                     }, { merge: true });
                     batchHasUpdates = true;
                     currentBatchSize++;
                 } catch (err) {
-                    console.error('Fehler beim Vorbereiten der YellowMap-Aktualisierung für', fahrt.docId, err);
+                    console.error('Fehler beim Vorbereiten der Routing-API-Aktualisierung für', fahrt.docId, err);
                 }
             }
 
@@ -864,7 +838,7 @@ async function recomputeWithYellowMap(list, username) {
                 await new Promise(resolve => setTimeout(resolve, 100));
             }
         } catch (error) {
-            console.error(`Fehler bei YellowMap-Berechnung für Fahrt ${fahrt.id}:`, error);
+            console.error(`Fehler bei Routing-API-Berechnung für Fahrt ${fahrt.id}:`, error);
         }
     }
 
@@ -874,13 +848,13 @@ async function recomputeWithYellowMap(list, username) {
     if (hasChanges) {
         try {
             saveFahrten();
-            console.log('Aktualisierte Fahrten im LocalStorage gespeichert (YellowMap)');
+            console.log('Aktualisierte Fahrten im LocalStorage gespeichert (Routing-API)');
         } catch (err) {
-            console.error('Fehler beim Speichern der YellowMap-aktualisierten Fahrten:', err);
+            console.error('Fehler beim Speichern der Routing-API-aktualisierten Fahrten:', err);
         }
     }
 
-    console.log(`YellowMap Neuberechnung abgeschlossen. ${hasChanges ? 'Änderungen wurden gespeichert.' : 'Keine Änderungen.'}`);
+    console.log(`Routing-API Neuberechnung abgeschlossen. ${hasChanges ? 'Änderungen wurden gespeichert.' : 'Keine Änderungen.'}`);
     return hasChanges;
 }
 
@@ -1468,7 +1442,7 @@ function normalizeFahrtFromFirestore(id, data) {
             }).filter(Boolean)
             : [],
         distance: data.distance || 0,
-        routeCalculatedWithYellowMap: data.routeCalculatedWithYellowMap || false
+        routeCalculatedWithRoutingAPI: data.routeCalculatedWithRoutingAPI || false
     };
 }
 
@@ -1501,7 +1475,7 @@ async function saveFahrtToFirestore(username, fahrt) {
             }).filter(Boolean)
             : [],
         distance: fahrt.distance || 0,
-        routeCalculatedWithYellowMap: fahrt.routeCalculatedWithYellowMap || false
+        routeCalculatedWithRoutingAPI: fahrt.routeCalculatedWithRoutingAPI || false
     };
     await docRef.add(payload);
 }
