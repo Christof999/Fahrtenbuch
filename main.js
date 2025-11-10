@@ -472,31 +472,76 @@ async function calculateYellowMapRoute(startLocation, endLocation) {
             if (typeof ym !== 'undefined' && typeof ym.ready === 'function') {
                 ym.ready(function(modules) {
                     try {
+                        // Debug: Zeige verfügbare Module
+                        console.log('YellowMap modules:', modules);
+                        console.log('YellowMap modules keys:', modules ? Object.keys(modules) : 'keine');
+                        
                         // Prüfe ob Routing-Modul verfügbar ist
-                        if (!modules || !modules.provider) {
-                            console.warn('YellowMap Routing-Modul nicht verfügbar');
+                        if (!modules) {
+                            console.warn('YellowMap modules nicht verfügbar');
                             resolve(null);
                             return;
                         }
 
-                        const provider = modules.provider;
-                        if (!provider.RouteService) {
-                            console.warn('YellowMap RouteService nicht verfügbar');
+                        // Versuche verschiedene mögliche Strukturen
+                        let provider = modules.provider;
+                        if (!provider && modules.routing) {
+                            provider = modules.routing;
+                        }
+                        if (!provider && modules.RouteService) {
+                            provider = { RouteService: modules.RouteService };
+                        }
+                        
+                        if (!provider) {
+                            console.warn('YellowMap Provider nicht verfügbar. Verfügbare Module:', Object.keys(modules));
+                            resolve(null);
+                            return;
+                        }
+
+                        console.log('YellowMap provider:', provider);
+                        console.log('YellowMap provider keys:', Object.keys(provider));
+
+                        // Prüfe verschiedene mögliche Service-Namen
+                        const RouteService = provider.RouteService || provider.Route || provider.route || provider.routing;
+                        if (!RouteService) {
+                            console.warn('YellowMap RouteService nicht verfügbar. Verfügbare Services:', Object.keys(provider));
                             resolve(null);
                             return;
                         }
 
                         // Route berechnen
-                        const routeService = new provider.RouteService();
-                        const start = provider.LatLng(startLocation.lat, startLocation.lng);
-                        const end = provider.LatLng(endLocation.lat, endLocation.lng);
+                        const RouteServiceClass = RouteService;
+                        const routeService = typeof RouteServiceClass === 'function' ? new RouteServiceClass() : RouteServiceClass;
+                        
+                        // Versuche verschiedene LatLng-Implementierungen
+                        const LatLng = provider.LatLng || provider.latLng || provider.LatLng || (lat => lng => ({ lat, lng }));
+                        const start = typeof LatLng === 'function' ? LatLng(startLocation.lat)(startLocation.lng) : { lat: startLocation.lat, lng: startLocation.lng };
+                        const end = typeof LatLng === 'function' ? LatLng(endLocation.lat)(endLocation.lng) : { lat: endLocation.lat, lng: endLocation.lng };
 
-                        routeService.route({
+                        // Versuche verschiedene TravelMode-Implementierungen
+                        const TravelMode = provider.TravelMode || provider.travelMode || { DRIVING: 'driving' };
+                        const travelMode = TravelMode.DRIVING || TravelMode.driving || 'driving';
+
+                        console.log('YellowMap Route-Berechnung startet:', { start, end, travelMode });
+
+                        const routeMethod = routeService.route || routeService.calculateRoute || routeService.getRoute;
+                        if (!routeMethod) {
+                            console.warn('YellowMap Route-Methode nicht gefunden. Verfügbare Methoden:', Object.keys(routeService));
+                            resolve(null);
+                            return;
+                        }
+
+                        // Versuche verschiedene Status-Check-Implementierungen
+                        const RouteStatus = provider.RouteStatus || provider.routeStatus || { OK: 'OK' };
+                        const statusOK = RouteStatus.OK || RouteStatus.ok || 'OK';
+
+                        routeMethod.call(routeService, {
                             origin: start,
                             destination: end,
-                            travelMode: provider.TravelMode.DRIVING
+                            travelMode: travelMode
                         }, function(result, status) {
-                            if (status === provider.RouteStatus.OK && result && result.routes && result.routes.length > 0) {
+                            console.log('YellowMap Route-Ergebnis:', { result, status, statusOK });
+                            if ((status === statusOK || status === 'OK') && result && result.routes && result.routes.length > 0) {
                                 const route = result.routes[0];
                                 if (route.legs && route.legs.length > 0) {
                                     // Summiere alle Legs der Route
