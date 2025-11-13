@@ -1327,6 +1327,11 @@ function showDaySummaryModal(startValue, dayDistance, computedValue) {
     const distanceEl = document.getElementById('summaryDayDistance');
     if (distanceEl) distanceEl.textContent = formatDistance(dayDistance);
 
+    const computedEl = document.getElementById('summaryComputedValue');
+    if (computedEl) {
+        computedEl.textContent = isFiniteNumber(computedValue) ? formatOdometerLabel(computedValue) : '–';
+    }
+
     const input = document.getElementById('finalOdometerInput');
     if (input) {
         input.value = isFiniteNumber(computedValue) ? formatOdometerInputValue(computedValue) : '';

@@ -24,8 +24,15 @@
                         </div>
                     </div>
                     <div class="odometer-stats">
-                        <span class="stat-item">Startwert heute: <strong id="odometerStartValue">–</strong></span>
-                        <span class="stat-item">Gefahren heute: <strong id="odometerDayDistance">0 km</strong></span>
+                        <div class="stat-card">
+                            <div class="stat-label">Startwert heute</div>
+                            <div class="stat-value" id="odometerStartValue">–</div>
+                        </div>
+                        <div class="stat-card stat-card-highlight">
+                            <div class="stat-label">Gefahren heute</div>
+                            <div class="stat-value" id="odometerDayDistance">0 km</div>
+                            <div class="stat-hint">Diese Kilometer bleiben für heute erhalten</div>
+                        </div>
                     </div>
                     <button id="endOfDayBtn" class="btn btn-primary btn-small">Tag beenden</button>
                 </div>
@@ -111,20 +118,26 @@
             <span class="close day-summary-close">&times;</span>
             <h2>Tag beendet</h2>
             <div class="day-summary-body">
-                <p class="day-summary-message">Tag beendet, Glückwunsch! Stimmt der ausgerechnete Kilometerstand mit dem tatsächlichen überein?</p>
+                <div class="summary-icon">✓</div>
+                <h3 class="summary-title">Tag beendet</h3>
+                <p class="day-summary-message">Die gefahrenen Kilometer für heute bleiben erhalten. Bitte bestätige den berechneten Kilometerstand:</p>
                 <div class="summary-info">
-                    <div class="summary-row">
-                        <span>Startwert:</span>
-                        <strong id="summaryStartValue">–</strong>
+                    <div class="summary-card">
+                        <div class="summary-label">Startwert heute</div>
+                        <div class="summary-value" id="summaryStartValue">–</div>
                     </div>
-                    <div class="summary-row">
-                        <span>Gefahrene Kilometer:</span>
-                        <strong id="summaryDayDistance">0 km</strong>
+                    <div class="summary-card">
+                        <div class="summary-label">Gefahrene Kilometer</div>
+                        <div class="summary-value" id="summaryDayDistance">0 km</div>
+                    </div>
+                    <div class="summary-card summary-card-result">
+                        <div class="summary-label">Berechneter Kilometerstand</div>
+                        <div class="summary-value-large" id="summaryComputedValue">–</div>
                     </div>
                 </div>
                 <div class="summary-input">
-                    <label for="finalOdometerInput">Berechneter Kilometerstand</label>
-                    <input id="finalOdometerInput" type="number" inputmode="decimal" step="0.1">
+                    <label for="finalOdometerInput">Tatsächlicher Kilometerstand</label>
+                    <input id="finalOdometerInput" type="number" inputmode="decimal" step="0.1" placeholder="Bitte eingeben">
                 </div>
                 <div class="modal-actions">
                     <button id="confirmDaySummaryBtn" class="btn btn-primary">Bestätigen</button>
